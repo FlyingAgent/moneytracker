@@ -6,12 +6,19 @@
 //
 
 import SwiftUI
+import UIKit
 
 @main
 struct moneytrackerApp: App {
+    init() {
+        // Ensure SwiftUI List (UITableView) uses transparent backgrounds
+        UITableView.appearance().backgroundColor = .clear
+        UITableViewCell.appearance().backgroundColor = .clear
+    }
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .tint(.pink)
         }
     }
 }
