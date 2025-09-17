@@ -1660,9 +1660,19 @@ private struct CardsView: View {
     @ObservedObject var store: ExpenseStore
     let currencyCode: String
 
+    private enum AmountMode: Equatable {
+        case preset(Int)
+        case custom
+    }
+
+    private let presetAmounts: [Double] = [5, 10, 15, 20]
+    private let defaultPresetIndex: Int = 1
+
     @State private var name: String = ""
     @State private var amountText: String = ""
     @State private var showArchive: Bool = false
+    @State private var showInfo: Bool = false
+    @State private var amountMode: AmountMode = .preset(1)
     @FocusState private var amountFocused: Bool
 
     private var parsedAmount: Double? { parseAmount(amountText).map { max($0, 0) } }
@@ -1699,20 +1709,64 @@ private struct CardsView: View {
             }
             .listRowBackground(Color.clear)
 
-            Section("New Card") {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Cards work like mini wallets. Give one an amount and spend from it until it runs empty.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+            Section {
+                VStack(spacing: 16) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Name (optional)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        TextField("e.g. Groceries", text: $name)
+                            .textInputAutocapitalization(.words)
+                            .textFieldStyle(.plain)
+                            .padding(.vertical, 10)
+                            .padding(.horizontal, 14)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .fill(Color(.secondarySystemBackground))
+                            )
+                    }
 
-                    TextField("Name (optional)", text: $name)
-                        .textInputAutocapitalization(.words)
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Quick Amount")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Slider(value: sliderBinding, in: 0...Double(presetAmounts.count - 1), step: 1) {
+                            Text("")
+                        } minimumValueLabel: {
+                            Text(presetLabel(for: 0))
+                                .font(.caption2)
+                        } maximumValueLabel: {
+                            Text(presetLabel(for: presetAmounts.count - 1))
+                                .font(.caption2)
+                        }
+                        HStack {
+                            ForEach(presetAmounts.indices, id: \.self) { idx in
+                                Text(presetLabel(for: idx))
+                                    .font(.caption2)
+                                    .fontWeight(idx == selectedPresetIndex ? .semibold : .regular)
+                                    .foregroundStyle(idx == selectedPresetIndex ? .primary : .secondary)
+                                    .frame(maxWidth: .infinity)
+                            }
+                        }
+                    }
 
-                    TextField("Amount (\(currencyCode))", text: $amountText)
-                        .keyboardType(.decimalPad)
-                        .focused($amountFocused)
-                        .submitLabel(.done)
-                        .onSubmit(addCard)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Amount (\(currencyCode))")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        TextField("Enter amount", text: $amountText)
+                            .keyboardType(.decimalPad)
+                            .focused($amountFocused)
+                            .submitLabel(.done)
+                            .textFieldStyle(.plain)
+                            .padding(.vertical, 10)
+                            .padding(.horizontal, 14)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .fill(Color(.secondarySystemBackground))
+                            )
+                            .onSubmit(addCard)
+                    }
 
                     Button {
                         addCard()
@@ -1724,6 +1778,18 @@ private struct CardsView: View {
                     .disabled(!canCreateCard)
                 }
                 .padding(.vertical, 4)
+            } header: {
+                HStack {
+                    Text("New Card")
+                    Spacer()
+                    Button {
+                        showInfo = true
+                    } label: {
+                        Image(systemName: "info.circle")
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Card info")
+                }
             }
 
             Section(activeCards.isEmpty ? "Cards" : "Active Cards") {
@@ -1804,14 +1870,67 @@ private struct CardsView: View {
         .scrollContentBackground(.hidden)
         .background(appBackground)
         .navigationTitle("Cards")
+        .onAppear(perform: loadDefaults)
+        .onChange(of: amountFocused) { focused in
+            if focused { amountMode = .custom }
+        }
+        .alert("Cards", isPresented: $showInfo) {
+            Button("Got it", role: .cancel) { }
+        } message: {
+            Text("Cards act like mini wallets. Give one a budget and mark it used when it's empty.")
+        }
     }
 
     private func addCard() {
         guard let limit = parsedAmount, limit > 0 else { return }
         store.addCard(name: name, limit: limit)
         name = ""
-        amountText = ""
+        amountMode = .preset(defaultPresetIndex)
+        amountText = amountString(from: presetAmounts[defaultPresetIndex])
         amountFocused = false
+    }
+
+    private func loadDefaults() {
+        if amountText.isEmpty {
+            amountText = amountString(from: presetAmounts[defaultPresetIndex])
+            amountMode = .preset(defaultPresetIndex)
+        }
+    }
+
+    private var sliderBinding: Binding<Double> {
+        Binding(
+            get: { Double(selectedPresetIndex) },
+            set: { newValue in
+                let rounded = Int(round(newValue))
+                let clamped = max(0, min(presetAmounts.count - 1, rounded))
+                amountMode = .preset(clamped)
+                amountText = amountString(from: presetAmounts[clamped])
+                amountFocused = false
+            }
+        )
+    }
+
+    private var selectedPresetIndex: Int {
+        switch amountMode {
+        case .preset(let idx):
+            return max(0, min(presetAmounts.count - 1, idx))
+        case .custom:
+            guard let value = parsedAmount else { return defaultPresetIndex }
+            if let first = presetAmounts.first, value <= first { return 0 }
+            if let last = presetAmounts.last, value >= last { return presetAmounts.count - 1 }
+            let nearest = presetAmounts.enumerated().min(by: { abs($0.element - value) < abs($1.element - value) })
+            return nearest?.offset ?? defaultPresetIndex
+        }
+    }
+
+    private func presetLabel(for index: Int) -> String {
+        guard presetAmounts.indices.contains(index) else { return "" }
+        let amount = presetAmounts[index]
+        return amountString(from: amount) + "€"
+    }
+
+    private func amountString(from amount: Double) -> String {
+        amount.formatted(.number.precision(.fractionLength(0...2)))
     }
 }
 
