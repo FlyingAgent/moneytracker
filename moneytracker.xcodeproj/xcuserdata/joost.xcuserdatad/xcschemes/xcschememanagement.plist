@@ -4,10 +4,42 @@
 <dict>
 	<key>SchemeUserState</key>
 	<dict>
+		<key>MoneytrackerWidgets.xcscheme</key>
+		<dict>
+			<key>isShown</key>
+			<false/>
+			<key>orderHint</key>
+			<integer>1</integer>
+		</dict>
 		<key>moneytracker.xcscheme_^#shared#^_</key>
 		<dict>
+			<key>isShown</key>
+			<true/>
 			<key>orderHint</key>
 			<integer>0</integer>
+		</dict>
+	</dict>
+	<key>SuppressBuildableAutocreation</key>
+	<dict>
+		<key>C8FBC54A2E759C5B0054FDD6</key>
+		<dict>
+			<key>primary</key>
+			<true/>
+		</dict>
+		<key>C8FBC5572E759C5C0054FDD6</key>
+		<dict>
+			<key>primary</key>
+			<true/>
+		</dict>
+		<key>C8FBC5612E759C5C0054FDD6</key>
+		<dict>
+			<key>primary</key>
+			<true/>
+		</dict>
+		<key>C8FBC5822E759C5C0054FDD6</key>
+		<dict>
+			<key>primary</key>
+			<true/>
 		</dict>
 	</dict>
 </dict>
