@@ -114,7 +114,7 @@ struct Budget: Identifiable, Codable, Equatable {
     var listId: UUID
     var categoryId: UUID?
     var amount: Double
-    var scope: Scope
+     var scope: Scope
 
     init(id: UUID = UUID(), listId: UUID, categoryId: UUID? = nil, amount: Double, scope: Scope) {
         self.id = id
@@ -555,6 +555,14 @@ final class ExpenseStore: ObservableObject {
         }
     }
 
+    func restoreCard(_ card: Card) {
+        if let idx = cards.firstIndex(where: { $0.id == card.id }) {
+            objectWillChange.send()
+            cards[idx].isBroken = false
+            saveCards()
+        }
+    }
+
     func removeCard(_ card: Card) {
         objectWillChange.send()
         cards.removeAll { $0.id == card.id }
@@ -580,10 +588,15 @@ struct ContentView: View {
     @State private var showingAdd = false
     @State private var selectedPeriod: Period = .month
     @State private var showingManageLists = false
-    @State private var showingManageCards = false
     @State private var showingManageCategories = false
     @State private var showingManageBudgets = false
     @State private var showingSettings = false
+    @State private var selectedTab: Tab = .start
+
+    private enum Tab: Hashable {
+        case start
+        case cards
+    }
 
     private var currencyCode: String { Locale.current.currency?.identifier ?? (Locale.current.currencyCode ?? "USD") }
 
@@ -713,17 +726,37 @@ struct ContentView: View {
     }
 
     var body: some View {
+        TabView(selection: $selectedTab) {
+            startTab
+                .tabItem {
+                    Label("Start", systemImage: "house.fill")
+                }
+                .tag(Tab.start)
+
+            cardsTab
+                .tabItem {
+                    Label("Cards", systemImage: "creditcard.fill")
+                }
+                .tag(Tab.cards)
+        }
+        .tint(.pink)
+        .onChange(of: categoriesEnabled) { enabled in
+            if !enabled { showingManageCategories = false }
+        }
+        .onChange(of: budgetsEnabled) { enabled in
+            if !enabled { showingManageBudgets = false }
+        }
+    }
+
+    private var startTab: some View {
         NavigationStack {
             VStack(spacing: 16) {
-                // Period selector
                 Picker("Period", selection: $selectedPeriod) {
                     ForEach(Period.allCases) { p in
                         Text(p.shortLabel).tag(p)
                     }
                 }
                 .pickerStyle(.segmented)
-
-                // List selector moved to toolbar menu for a minimal look
 
                 if !alerts.isEmpty {
                     VStack(spacing: 10) {
@@ -752,10 +785,10 @@ struct ContentView: View {
 
                 List {
                     if filteredExpenses.isEmpty {
-                    VStack(alignment: .center, spacing: 12) {
-                        EmptyStateView(budgetsEnabled: budgetsEnabled)
-                            .padding(.vertical, 24)
-                    }
+                        VStack(alignment: .center, spacing: 12) {
+                            EmptyStateView(budgetsEnabled: budgetsEnabled)
+                                .padding(.vertical, 24)
+                        }
                         .frame(maxWidth: .infinity)
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
@@ -794,7 +827,6 @@ struct ContentView: View {
                         }
                         Divider()
                         Button("Manage Lists…") { showingManageLists = true }
-                        Button("Manage Cards…") { showingManageCards = true }
                         if categoriesEnabled {
                             Button("Manage Categories…") { showingManageCategories = true }
                         }
@@ -827,9 +859,6 @@ struct ContentView: View {
             .sheet(isPresented: $showingManageLists) {
                 ManageListsView(store: store)
             }
-            .sheet(isPresented: $showingManageCards) {
-                ManageCardsView(store: store, currencyCode: currencyCode)
-            }
             .sheet(isPresented: $showingManageCategories) {
                 ManageCategoriesView(store: store)
             }
@@ -840,11 +869,14 @@ struct ContentView: View {
                 SettingsView()
             }
         }
-        .onChange(of: categoriesEnabled) { enabled in
-            if !enabled { showingManageCategories = false }
-        }
-        .onChange(of: budgetsEnabled) { enabled in
-            if !enabled { showingManageBudgets = false }
+        .toolbarBackground(appBackground, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
+        .background(appBackground.ignoresSafeArea())
+    }
+
+    private var cardsTab: some View {
+        NavigationStack {
+            CardsView(store: store, currencyCode: currencyCode)
         }
         .toolbarBackground(appBackground, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
@@ -982,6 +1014,71 @@ private struct CategoryBudgetCard: View {
         }
         .padding(14)
         .frame(width: 180)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color(.secondarySystemBackground))
+        )
+    }
+}
+
+private struct CardSummaryRow: View {
+    let card: Card
+    let spent: Double
+    let remaining: Double
+    let currencyCode: String
+    let isArchived: Bool
+
+    private var progress: Double {
+        guard card.limit > 0 else { return 0 }
+        return min(max(spent / card.limit, 0), 1)
+    }
+
+    private var title: String {
+        let trimmed = card.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Card" : trimmed
+    }
+
+    private var remainingLabel: String {
+        if isArchived { return "Limit used" }
+        return remaining.formatted(.currency(code: currencyCode)) + " left"
+    }
+
+    private var percentText: String {
+        let percent = Int(round(progress * 100))
+        return "\(percent)%"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(title)
+                    .font(.headline)
+                Spacer()
+                Text(card.limit.formatted(.currency(code: currencyCode)))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+
+            Text(remainingLabel)
+                .font(.subheadline)
+                .foregroundStyle(isArchived ? .secondary : .primary)
+
+            ProgressView(value: progress)
+                .tint(isArchived ? .gray : .pink)
+
+            HStack {
+                Text("Spent " + spent.formatted(.currency(code: currencyCode)))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if !isArchived {
+                    Text(percentText)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(16)
         .background(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .fill(Color(.secondarySystemBackground))
@@ -1558,139 +1655,163 @@ private struct CategoryChildRow: View {
     }
 }
 
-// Manage Cards
-private struct ManageCardsView: View {
-    @Environment(\.dismiss) private var dismiss
+// Cards tab
+private struct CardsView: View {
     @ObservedObject var store: ExpenseStore
     let currencyCode: String
 
     @State private var name: String = ""
     @State private var amountText: String = ""
-    @FocusState private var nameFocused: Bool
+    @State private var showArchive: Bool = false
     @FocusState private var amountFocused: Bool
-    @State private var showBroken: Bool = false
 
     private var parsedAmount: Double? { parseAmount(amountText).map { max($0, 0) } }
+    private var canCreateCard: Bool { (parsedAmount ?? 0) > 0 }
     private var activeCards: [Card] { store.activeCards(in: store.selectedListId) }
     private var archivedCards: [Card] { store.brokenCards(in: store.selectedListId) }
 
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section("Card Name") {
-                    TextField("e.g. Groceries", text: $name)
-                        .focused($nameFocused)
-                        .textInputAutocapitalization(.words)
-                }
+    private var selectedListName: String {
+        if let id = store.selectedListId, let name = store.lists.first(where: { $0.id == id })?.name { return name }
+        return store.lists.first?.name ?? "List"
+    }
 
-                Section("Limit") {
+    var body: some View {
+        List {
+            Section {
+                Menu {
+                    ForEach(store.lists) { list in
+                        Button(action: { store.selectedListId = list.id }) {
+                            HStack {
+                                Text(list.name)
+                                if list.id == store.selectedListId { Spacer(); Image(systemName: "checkmark") }
+                            }
+                        }
+                    }
+                } label: {
+                    HStack {
+                        Label("List", systemImage: "list.bullet")
+                            .font(.subheadline)
+                        Spacer()
+                        Text(selectedListName)
+                            .font(.headline)
+                    }
+                }
+            }
+            .listRowBackground(Color.clear)
+
+            Section("New Card") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Cards work like mini wallets. Give one an amount and spend from it until it runs empty.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+
+                    TextField("Name (optional)", text: $name)
+                        .textInputAutocapitalization(.words)
+
                     TextField("Amount (\(currencyCode))", text: $amountText)
                         .keyboardType(.decimalPad)
                         .focused($amountFocused)
-                }
+                        .submitLabel(.done)
+                        .onSubmit(addCard)
 
-                Section("Cards in \(selectedListName)") {
-                    if activeCards.isEmpty {
-                        Text("No cards yet. Add one above.")
+                    Button {
+                        addCard()
+                    } label: {
+                        Label("Create Card", systemImage: "plus.circle.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!canCreateCard)
+                }
+                .padding(.vertical, 4)
+            }
+
+            Section(activeCards.isEmpty ? "Cards" : "Active Cards") {
+                if activeCards.isEmpty {
+                    VStack(spacing: 8) {
+                        Image(systemName: "creditcard")
+                            .font(.title2)
                             .foregroundStyle(.secondary)
-                    } else {
-                        ForEach(activeCards) { card in
-                            CreditCardView(
+                        Text("No cards yet")
+                            .font(.subheadline.weight(.semibold))
+                        Text("Create a card above to track a small budget.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .listRowBackground(Color.clear)
+                } else {
+                    ForEach(activeCards) { card in
+                        CardSummaryRow(
+                            card: card,
+                            spent: store.spentAmount(on: card),
+                            remaining: store.remainingAmount(for: card),
+                            currencyCode: currencyCode,
+                            isArchived: false
+                        )
+                        .listRowBackground(Color.clear)
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            Button("Used") {
+                                store.breakCard(card)
+                            }
+                            .tint(.indigo)
+
+                            Button(role: .destructive) {
+                                store.removeCard(card)
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !archivedCards.isEmpty {
+                Section {
+                    DisclosureGroup(isExpanded: $showArchive) {
+                        ForEach(archivedCards) { card in
+                            CardSummaryRow(
                                 card: card,
-                                limit: card.limit,
                                 spent: store.spentAmount(on: card),
                                 remaining: store.remainingAmount(for: card),
                                 currencyCode: currencyCode,
-                                isBroken: false
+                                isArchived: true
                             )
-                            .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
                             .listRowBackground(Color.clear)
-                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                Button("Restore") {
+                                    store.restoreCard(card)
+                                }
+                                .tint(.teal)
+
                                 Button(role: .destructive) {
                                     store.removeCard(card)
                                 } label: {
                                     Label("Delete", systemImage: "trash")
                                 }
-                                Button {
-                                    store.breakCard(card)
-                                } label: {
-                                    Label("Break", systemImage: "archivebox")
-                                }
-                                .tint(.indigo)
                             }
                         }
-                    }
-                // Toggle for broken cards (always visible at end of section)
-                    Button {
-                        withAnimation { showBroken.toggle() }
                     } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: showBroken ? "chevron.down" : "chevron.right")
-                                .font(.caption.weight(.bold))
-                            Text(showBroken ? "Hide Broken Cards" : "Show Broken Cards (\(archivedCards.count))")
-                        }
+                        Label(showArchive ? "Hide used cards" : "Show used cards", systemImage: showArchive ? "chevron.down" : "chevron.right")
                     }
-                    .buttonStyle(.plain)
-                    .padding(.vertical, 4)
-                }
-
-                if showBroken {
-                    Section("Broken") {
-                        if archivedCards.isEmpty {
-                            Text("No broken cards yet.")
-                                .foregroundStyle(.secondary)
-                        } else {
-                            ForEach(archivedCards) { card in
-                                CreditCardView(
-                                    card: card,
-                                    limit: card.limit,
-                                    spent: store.spentAmount(on: card),
-                                    remaining: store.remainingAmount(for: card),
-                                    currencyCode: currencyCode,
-                                    isBroken: true
-                                )
-                                .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
-                                .listRowBackground(Color.clear)
-                                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                    Button(role: .destructive) {
-                                        store.removeCard(card)
-                                    } label: {
-                                        Label("Delete", systemImage: "trash")
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            .scrollContentBackground(.hidden)
-            .background(appBackground)
-            .navigationTitle("Cards")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Add Card") {
-                        if let limit = parsedAmount, limit > 0 {
-                            store.addCard(name: name, limit: limit)
-                            name = ""
-                            amountText = ""
-                            nameFocused = true
-                        }
-                    }
-                    .disabled((parsedAmount ?? 0) <= 0)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
                 }
             }
         }
-        .toolbarBackground(appBackground, for: .navigationBar)
-        .toolbarBackground(.visible, for: .navigationBar)
-        .background(appBackground.ignoresSafeArea())
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .background(appBackground)
+        .navigationTitle("Cards")
     }
 
-    private var selectedListName: String {
-        if let id = store.selectedListId, let name = store.lists.first(where: { $0.id == id })?.name { return name }
-        return store.lists.first?.name ?? "List"
+    private func addCard() {
+        guard let limit = parsedAmount, limit > 0 else { return }
+        store.addCard(name: name, limit: limit)
+        name = ""
+        amountText = ""
+        amountFocused = false
     }
 }
 
@@ -1895,97 +2016,3 @@ private struct CategoryBudgetInputGroup: View {
 }
 
 // Stylized credit card view
-private struct CreditCardView: View {
-    let card: Card
-    let limit: Double
-    let spent: Double
-    let remaining: Double
-    let currencyCode: String
-    var isBroken: Bool = false
-
-    var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(cardGradient)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .stroke(.white.opacity(0.08), lineWidth: 1)
-                )
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Image(systemName: "creditcard.fill")
-                        .foregroundStyle(.white.opacity(0.9))
-                    Text(card.name.isEmpty ? "Card" : card.name)
-                        .foregroundStyle(.white)
-                        .font(.headline.weight(.semibold))
-                    Spacer()
-                    if isBroken {
-                        Label("Broken", systemImage: "archivebox")
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 6)
-                            .background(Capsule().fill(.white.opacity(0.2)))
-                    } else {
-                        RoundedRectangle(cornerRadius: 4, style: .continuous)
-                            .fill(.white.opacity(0.35))
-                            .frame(width: 44, height: 28)
-                    }
-                }
-
-                progressBar
-
-                HStack(alignment: .firstTextBaseline) {
-                    Text(remaining.formatted(.currency(code: currencyCode)))
-                        .font(.title3.weight(.bold))
-                        .foregroundStyle(.white)
-                    Text("remaining")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(.white.opacity(0.85))
-                    Spacer()
-                    Text("of " + limit.formatted(.currency(code: currencyCode)))
-                        .font(.footnote)
-                        .foregroundStyle(.white.opacity(0.9))
-                }
-            }
-            .padding(16)
-        }
-        .frame(height: 140)
-        .saturation(isBroken ? 0 : 1)
-        .shadow(color: .black.opacity(0.12), radius: 10, x: 0, y: 6)
-    }
-
-    private var fraction: Double {
-        guard limit > 0 else { return 0 }
-        return min(max(spent / limit, 0), 1)
-    }
-
-    @ViewBuilder private var progressBar: some View {
-        GeometryReader { geo in
-            let width = geo.size.width
-            ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(.white.opacity(0.25))
-                    .frame(height: 6)
-                Capsule()
-                    .fill(.white)
-                    .frame(width: width * fraction, height: 6)
-            }
-        }
-        .frame(height: 6)
-    }
-
-    private var cardGradient: LinearGradient {
-        let hue = normalizedHue(from: card.id)
-        let c1 = Color(hue: hue, saturation: 0.7, brightness: 0.95)
-        let c2 = Color(hue: fmod(hue + 0.12, 1.0), saturation: 0.8, brightness: 0.75)
-        return LinearGradient(colors: [c1, c2], startPoint: .topLeading, endPoint: .bottomTrailing)
-    }
-
-    private func normalizedHue(from id: UUID) -> Double {
-        let s = id.uuidString
-        let hv = abs(s.hashValue)
-        // Distribute between 0.0 and 1.0
-        return Double(hv % 360) / 360.0
-    }
-}
