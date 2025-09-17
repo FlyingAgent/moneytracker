@@ -539,6 +539,11 @@ final class ExpenseStore: ObservableObject {
         cards(in: listId).filter { $0.isBroken }
     }
 
+    func card(for id: UUID?) -> Card? {
+        guard let id else { return nil }
+        return cards.first(where: { $0.id == id })
+    }
+
     func spentAmount(on card: Card) -> Double {
         expenses.filter { $0.cardId == card.id }.map { $0.amount }.reduce(0, +)
     }
@@ -794,7 +799,14 @@ struct ContentView: View {
                         .listRowSeparator(.hidden)
                     } else {
                         ForEach(filteredExpenses) { expense in
-                            ExpenseRow(expense: expense, category: store.category(for: expense.categoryId), currencyCode: currencyCode)
+                            let card = store.card(for: expense.cardId)
+                            ExpenseRow(
+                                expense: expense,
+                                category: store.category(for: expense.categoryId),
+                                card: card,
+                                cardRemaining: card.map { store.remainingAmount(for: $0) },
+                                currencyCode: currencyCode
+                            )
                         }
                         .onDelete { offsets in
                             let ids = Set(offsets.map { filteredExpenses[$0].id })
@@ -1131,8 +1143,14 @@ private struct EmptyStateView: View {
 private struct ExpenseRow: View {
     let expense: Expense
     let category: ExpenseCategory?
+    let card: Card?
+    let cardRemaining: Double?
     let currencyCode: String
     @AppStorage("categoriesEnabled") private var categoriesEnabled: Bool = true
+
+    @State private var showCardInfo = false
+    @State private var cardAlertTitle = ""
+    @State private var cardAlertMessage = ""
 
     private var title: String {
         if !expense.note.isEmpty { return expense.note }
@@ -1173,11 +1191,53 @@ private struct ExpenseRow: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
+            Button {
+                prepareCardAlert()
+            } label: {
+                Image(systemName: "creditcard")
+                    .font(.body)
+                    .foregroundStyle(cardButtonColor)
+                    .padding(6)
+                    .background(
+                        Circle()
+                            .fill(cardButtonBackground)
+                    )
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(card == nil ? "No card used" : "Show card info")
             Text(expense.amount, format: .currency(code: currencyCode))
                 .font(.body.weight(.semibold))
                 .foregroundStyle(tintColor)
         }
         .padding(.vertical, 4)
+        .alert(cardAlertTitle, isPresented: $showCardInfo) {
+            Button("Close", role: .cancel) { }
+        } message: {
+            Text(cardAlertMessage)
+        }
+    }
+
+    private var cardButtonColor: Color {
+        card == nil ? .secondary : .pink
+    }
+
+    private var cardButtonBackground: Color {
+        card == nil ? Color(.systemGray5) : Color(.systemGray6)
+    }
+
+    private func prepareCardAlert() {
+        if let card {
+            let name = card.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let displayName = name.isEmpty ? "Card" : name
+            let remainingText = (cardRemaining ?? card.limit).formatted(.currency(code: currencyCode))
+            let limitText = card.limit.formatted(.currency(code: currencyCode))
+            cardAlertTitle = displayName
+            cardAlertMessage = "Remaining " + remainingText + " of " + limitText + "."
+        } else {
+            cardAlertTitle = "No Card"
+            cardAlertMessage = "This expense wasn't booked to a card."
+        }
+        showCardInfo = true
     }
 }
 
