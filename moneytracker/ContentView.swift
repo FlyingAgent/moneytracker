@@ -1366,6 +1366,15 @@ private extension View {
             self
         }
     }
+
+    @ViewBuilder
+    func scrollDismissesKeyboardCompat() -> some View {
+        if #available(iOS 16.0, *) {
+            self.scrollDismissesKeyboard(.interactively)
+        } else {
+            self
+        }
+    }
 }
 
 // Parsing helpers
@@ -1868,6 +1877,7 @@ private struct CardsView: View {
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
+        .scrollDismissesKeyboardCompat()
         .background(appBackground)
         .navigationTitle("Cards")
         .onAppear(perform: loadDefaults)
@@ -1878,6 +1888,12 @@ private struct CardsView: View {
             Button("Got it", role: .cancel) { }
         } message: {
             Text("Cards act like mini wallets. Give one a budget and mark it used when it's empty.")
+        }
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Done") { amountFocused = false }
+            }
         }
     }
 
